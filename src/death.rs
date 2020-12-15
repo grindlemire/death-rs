@@ -2,9 +2,9 @@ use super::error::{CloseTimedOutError, DeathError};
 use crossbeam_channel::after;
 use crossbeam_channel::{bounded, select, unbounded, Receiver, Sender};
 use signal_hook::iterator::Signals;
-use std::{error::Error, thread::spawn, time::Duration};
+use std::{error::Error, fmt::Debug, thread::spawn, time::Duration};
 
-pub trait Life: std::fmt::Debug {
+pub trait Life: Debug {
     fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn id(&self) -> String;
 }
