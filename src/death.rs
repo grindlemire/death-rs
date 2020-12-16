@@ -132,3 +132,160 @@ impl Death {
         Ok(receiver)
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+    use libc;
+    use signal_hook::{SIGINT, SIGTERM};
+    use std::{error::Error, thread::sleep, time::Duration};
+
+    #[derive(thiserror::Error, Debug)]
+    pub enum TestErr {
+        #[error("test error: {0}")]
+        Err(String),
+    }
+
+    #[derive(Debug)]
+    struct TestWorker {
+        err_string: Option<String>,
+        wait: Option<Duration>,
+    }
+
+    impl TestWorker {
+        fn new_failure(err_string: String) -> TestWorker {
+            TestWorker {
+                err_string: Some(err_string),
+                wait: None,
+            }
+        }
+
+        fn new_failure_wait(err_string: String, wait_millis: u64) -> TestWorker {
+            TestWorker {
+                err_string: Some(err_string),
+                wait: Some(Duration::from_millis(wait_millis)),
+            }
+        }
+
+        fn new_ok() -> TestWorker {
+            TestWorker {
+                err_string: None,
+                wait: None,
+            }
+        }
+
+        fn get_result(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+            match self.wait {
+                Some(wait) => sleep(wait),
+                None => {}
+            };
+            match self.err_string.clone() {
+                Some(s) => Err(TestErr::Err(s).into()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    impl Life for TestWorker {
+        fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>> {
+            loop {
+                select! {
+                    recv(done) -> _ => {
+                        return self.get_result();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_shutdown_failure() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(1000))?;
+        d.give_life(TestWorker::new_failure(String::from("fail shutdown")));
+        let errors = d.send_shutdown();
+        assert_eq!(errors.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_shutdown_success() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(1000))?;
+        d.give_life(TestWorker::new_ok());
+        let errors = d.send_shutdown();
+        assert_eq!(errors.len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_shutdown_multiple_failures() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(1000))?;
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_failure(String::from("fail shutdown")));
+        }
+        let errors = d.send_shutdown();
+        assert_eq!(errors.len(), 10);
+        Ok(())
+    }
+    #[test]
+    fn test_shutdown_some_failures() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(1000))?;
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_failure(String::from("fail shutdown")));
+        }
+
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_ok());
+        }
+        let errors = d.send_shutdown();
+        assert_eq!(errors.len(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_handle_signals() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(1000))?;
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_failure(String::from("fail shutdown")));
+        }
+
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_ok());
+        }
+
+        spawn(move || {
+            sleep(Duration::from_millis(100));
+            unsafe { libc::raise(SIGINT) };
+        });
+        let errors = d.wait_for_death();
+        assert_eq!(errors.len(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_timeout_failures() -> Result<(), Box<dyn Error>> {
+        let mut d = Death::new(&[SIGINT, SIGTERM], Duration::from_millis(100))?;
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_failure_wait(
+                String::from("fail shutdown"),
+                1000,
+            ));
+        }
+
+        for _ in 0..10 {
+            d.give_life(TestWorker::new_ok());
+        }
+
+        spawn(move || {
+            sleep(Duration::from_millis(100));
+            unsafe { libc::raise(SIGINT) };
+        });
+        let errors = d.wait_for_death();
+        assert_eq!(errors.len(), 1);
+
+        errors
+            .iter()
+            .for_each(|e| assert_eq!(e.to_string(), super::Error::TimedOut(10).to_string()));
+        Ok(())
+    }
+}

@@ -16,3 +16,4 @@ uuid = {version = "0.8.1", features = ["v4"]}
 rand = "0.7.3"
 simple_logger = "1.11.0"
 log = "0.4.11"
+libc = "0.2.81"
