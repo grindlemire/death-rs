@@ -133,6 +133,9 @@ impl Death {
     }
 }
 
+// I know these tests are likely racey but they do give reasonable assurance that things
+// are working as they are supposed to. At some point I will come back and make these
+// work properly.
 #[cfg(test)]
 mod test {
 
