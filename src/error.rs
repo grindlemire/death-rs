@@ -1,48 +1,16 @@
-use std::{
-    error::Error,
-    fmt::{Display, Formatter, Result},
-};
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    // #[error("incoming error")]
+    // Incoming(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("Worker failed to shut down cleanly: {0}")]
+    Shutdown(#[from] Box<dyn std::error::Error + Send + Sync>),
 
-#[derive(Debug)]
-pub struct CloseTimedOutError {
-    num_waiting: i32,
+    #[error("Timed out while waiting for {0} workers to close")]
+    TimedOut(i32),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Channel(#[from] crossbeam_channel::RecvError),
 }
-
-impl CloseTimedOutError {
-    pub fn new(waiting: i32) -> CloseTimedOutError {
-        CloseTimedOutError {
-            num_waiting: waiting,
-        }
-    }
-}
-
-impl Display for CloseTimedOutError {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        write!(
-            f,
-            "Timed out while waiting for {} workers to close",
-            self.num_waiting
-        )
-    }
-}
-
-impl Error for CloseTimedOutError {}
-
-#[derive(Debug)]
-pub struct DeathError {
-    cause: Box<dyn Error + Send + Sync>,
-}
-
-impl DeathError {
-    pub fn new(cause: Box<dyn Error + Send + Sync>) -> DeathError {
-        DeathError { cause }
-    }
-}
-
-impl Display for DeathError {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        write!(f, "Error from worker: {}", self.cause)
-    }
-}
-
-impl Error for DeathError {}

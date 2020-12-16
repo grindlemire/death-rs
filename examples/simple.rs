@@ -1,5 +1,6 @@
 use crossbeam_channel::{select, Receiver};
-use death_rs::death::*;
+use death_rs::death::{Death, Life};
+use error::Error;
 use log::error;
 use log::info;
 use rand::Rng;
@@ -7,7 +8,7 @@ use signal_hook::{SIGINT, SIGTERM};
 use simple_logger::SimpleLogger;
 use std::thread::sleep;
 use std::time::Duration;
-use std::{error::Error, process::exit};
+use std::{error, process::exit};
 
 fn main() {
     SimpleLogger::new().init().unwrap();
@@ -26,7 +27,8 @@ fn main() {
     // This will spin them up in their own threads.
     for i in 0..10 {
         let worker = Worker::new(i);
-        d.give_life(worker);
+        let worker2 = Worker::new(i * 10);
+        d.give_life(worker).give_life(worker2);
     }
 
     // block the main thread waiting for a signal.
@@ -38,6 +40,12 @@ fn main() {
     if errors.len() as i32 > 0 {
         exit(1)
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum MyError {
+    #[error("my error")]
+    Err,
 }
 
 #[derive(Debug)]
@@ -53,21 +61,17 @@ impl Worker {
 
 impl Life for Worker {
     fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        info!("Running {}", self.id());
+        info!("Running {}", self.id);
         loop {
             select! {
                 recv(done) -> _ => {
                     let mut rng = rand::thread_rng();
                     let timeout = rng.gen_range(0, 1000);
                     sleep(Duration::from_millis(timeout));
-                    info!("shut down {} with {} delay", self.id(), timeout);
-                    return Ok(());
+                    info!("shut down {} with {} delay", self.id, timeout);
+                    return Err(MyError::Err.into());
                 }
             }
         }
-    }
-
-    fn id(&self) -> String {
-        format!("worker {}", self.id)
     }
 }

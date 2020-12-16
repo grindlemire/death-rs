@@ -1,32 +1,38 @@
-use super::error::{CloseTimedOutError, DeathError};
+use super::error::Error;
 use crossbeam_channel::after;
 use crossbeam_channel::{bounded, select, unbounded, Receiver, Sender};
 use signal_hook::iterator::Signals;
-use std::{error::Error, fmt::Debug, thread::spawn, time::Duration};
+use std::{fmt::Debug, thread::spawn, time::Duration};
 
 pub trait Life: Debug {
-    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>>;
-    fn id(&self) -> String;
+    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[derive(Debug)]
 pub struct Death {
+    // the channel listening for OS signals
     signals: Receiver<()>,
+
+    // the list of worker threads we are tracking
     closers: Vec<Option<Closer>>,
+
+    // the timeout to wait for the children to shut down
     timeout: Duration,
 
-    signal_closed: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
-    receive_closed: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
+    // used to signal to the workers they need to shut down
+    signal_closed: Sender<Result<(), Error>>,
+
+    // used to signal the main thread that a worker has shut down successfully
+    receive_closed: Receiver<Result<(), Error>>,
 }
 
 #[derive(Debug)]
 struct Closer {
-    id: String,
     close: Sender<()>,
 }
 
 impl Death {
-    pub fn new(signals: &[i32], timeout: Duration) -> Result<Death, Box<dyn Error>> {
+    pub fn new(signals: &[i32], timeout: Duration) -> Result<Death, Error> {
         let (signal_closed, receive_closed) = unbounded();
         Ok(Death {
             signals: Death::register_signals(signals)?,
@@ -37,26 +43,29 @@ impl Death {
         })
     }
 
-    pub fn give_life<T: 'static>(&mut self, runner: T) -> &Death
+    pub fn give_life<T>(&mut self, runner: T) -> &mut Death
     where
-        T: Life + std::marker::Send,
+        T: Life + std::marker::Send + 'static,
     {
         let (send_done, receive_done) = bounded(0);
-        let closer = Some(Closer {
-            id: runner.id(),
-            close: send_done,
-        });
+        let closer = Some(Closer { close: send_done });
         let signaler = self.signal_closed.clone();
 
         spawn(move || {
-            let _ = signaler.send(runner.run(receive_done));
+            // This is a hack to force the std::error:Error into death::error::Error
+            // while keeping the translation transparent to the caller
+            let result = match runner.run(receive_done) {
+                Ok(r) => Ok(r),
+                Err(e) => Err(Error::from(e)),
+            };
+            let _ = signaler.send(result);
         });
 
         self.closers.push(closer);
         self
     }
 
-    pub fn wait_for_death(&mut self) -> Vec<Box<dyn Error>> {
+    pub fn wait_for_death(&mut self) -> Vec<Error> {
         loop {
             select! {
                 recv(self.signals) -> _ => {
@@ -66,7 +75,7 @@ impl Death {
         }
     }
 
-    fn send_shutdown(&mut self) -> Vec<Box<dyn Error>> {
+    fn send_shutdown(&mut self) -> Vec<Error> {
         let mut errors = Vec::new();
 
         // send shutdown signal
@@ -85,10 +94,10 @@ impl Death {
                         // first strip off the crossbeam error and handle it
                         Ok(returned) => match returned {
                             // then handle the error returned from the worker
-                            Err(e) => Err(DeathError::new(e)),
+                            Err(e) => Err(e),
                             _ => Ok(()),
                         },
-                        Err(t) => Err(DeathError::new(t.into())),
+                        Err(t) => Err(Error::Channel(t)),
                     };
 
                     match err {
@@ -102,7 +111,7 @@ impl Death {
                 }
 
                 recv(timeout) -> _ => {
-                    errors.push(CloseTimedOutError::new(waiting).into());
+                    errors.push(Error::TimedOut(waiting));
                     break 'receive_output;
                 }
             }
@@ -110,7 +119,7 @@ impl Death {
         errors
     }
 
-    fn register_signals(signals: &[i32]) -> Result<Receiver<()>, Box<dyn Error>> {
+    fn register_signals(signals: &[i32]) -> Result<Receiver<()>, Error> {
         let (sender, receiver) = bounded(100);
         let signals = Signals::new(signals)?;
 
