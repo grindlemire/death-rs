@@ -27,8 +27,7 @@ fn main() {
     // This will spin them up in their own threads.
     for i in 0..10 {
         let worker = Worker::new(i);
-        let worker2 = Worker::new(i * 10);
-        d.give_life(worker).give_life(worker2);
+        d.give_life(worker);
     }
 
     // block the main thread waiting for a signal.
