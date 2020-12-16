@@ -5,8 +5,7 @@ use signal_hook::iterator::Signals;
 use std::{fmt::Debug, thread::spawn, time::Duration};
 
 pub trait Life: Debug {
-    fn run(&self, done: Receiver<()>) -> Result<(), Error>;
-    fn id(&self) -> String;
+    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[derive(Debug)]
@@ -29,7 +28,6 @@ pub struct Death {
 
 #[derive(Debug)]
 struct Closer {
-    id: String,
     close: Sender<()>,
 }
 
@@ -45,19 +43,22 @@ impl Death {
         })
     }
 
-    pub fn give_life<T: 'static>(&mut self, runner: T) -> &Death
+    pub fn give_life<T>(&mut self, runner: T) -> &mut Death
     where
-        T: Life + std::marker::Send,
+        T: Life + std::marker::Send + 'static,
     {
         let (send_done, receive_done) = bounded(0);
-        let closer = Some(Closer {
-            id: runner.id(),
-            close: send_done,
-        });
+        let closer = Some(Closer { close: send_done });
         let signaler = self.signal_closed.clone();
 
         spawn(move || {
-            let _ = signaler.send(runner.run(receive_done));
+            // This is a hack to force the std::error:Error into death::error::Error
+            // while keeping the translation transparent to the caller
+            let result = match runner.run(receive_done) {
+                Ok(r) => Ok(r),
+                Err(e) => Err(Error::from(e)),
+            };
+            let _ = signaler.send(result);
         });
 
         self.closers.push(closer);
@@ -93,10 +94,10 @@ impl Death {
                         // first strip off the crossbeam error and handle it
                         Ok(returned) => match returned {
                             // then handle the error returned from the worker
-                            Err(e) => Err(Error::Worker),
+                            Err(e) => Err(e),
                             _ => Ok(()),
                         },
-                        Err(t) => Err(Error::Worker),
+                        Err(t) => Err(Error::Channel(t)),
                     };
 
                     match err {

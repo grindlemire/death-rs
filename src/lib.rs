@@ -1,2 +1,2 @@
 pub mod death;
-mod error;
+pub mod error;
