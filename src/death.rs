@@ -1,22 +1,30 @@
-use super::error::{CloseTimedOutError, DeathError};
+use super::error::Error;
 use crossbeam_channel::after;
 use crossbeam_channel::{bounded, select, unbounded, Receiver, Sender};
 use signal_hook::iterator::Signals;
-use std::{error::Error, fmt::Debug, thread::spawn, time::Duration};
+use std::{fmt::Debug, thread::spawn, time::Duration};
 
 pub trait Life: Debug {
-    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn run(&self, done: Receiver<()>) -> Result<(), Error>;
     fn id(&self) -> String;
 }
 
 #[derive(Debug)]
 pub struct Death {
+    // the channel listening for OS signals
     signals: Receiver<()>,
+
+    // the list of worker threads we are tracking
     closers: Vec<Option<Closer>>,
+
+    // the timeout to wait for the children to shut down
     timeout: Duration,
 
-    signal_closed: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
-    receive_closed: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
+    // used to signal to the workers they need to shut down
+    signal_closed: Sender<Result<(), Error>>,
+
+    // used to signal the main thread that a worker has shut down successfully
+    receive_closed: Receiver<Result<(), Error>>,
 }
 
 #[derive(Debug)]
@@ -26,7 +34,7 @@ struct Closer {
 }
 
 impl Death {
-    pub fn new(signals: &[i32], timeout: Duration) -> Result<Death, Box<dyn Error>> {
+    pub fn new(signals: &[i32], timeout: Duration) -> Result<Death, Error> {
         let (signal_closed, receive_closed) = unbounded();
         Ok(Death {
             signals: Death::register_signals(signals)?,
@@ -56,7 +64,7 @@ impl Death {
         self
     }
 
-    pub fn wait_for_death(&mut self) -> Vec<Box<dyn Error>> {
+    pub fn wait_for_death(&mut self) -> Vec<Error> {
         loop {
             select! {
                 recv(self.signals) -> _ => {
@@ -66,7 +74,7 @@ impl Death {
         }
     }
 
-    fn send_shutdown(&mut self) -> Vec<Box<dyn Error>> {
+    fn send_shutdown(&mut self) -> Vec<Error> {
         let mut errors = Vec::new();
 
         // send shutdown signal
@@ -85,10 +93,10 @@ impl Death {
                         // first strip off the crossbeam error and handle it
                         Ok(returned) => match returned {
                             // then handle the error returned from the worker
-                            Err(e) => Err(DeathError::new(e)),
+                            Err(e) => Err(Error::Worker),
                             _ => Ok(()),
                         },
-                        Err(t) => Err(DeathError::new(t.into())),
+                        Err(t) => Err(Error::Worker),
                     };
 
                     match err {
@@ -102,7 +110,7 @@ impl Death {
                 }
 
                 recv(timeout) -> _ => {
-                    errors.push(CloseTimedOutError::new(waiting).into());
+                    errors.push(Error::TimedOut(waiting));
                     break 'receive_output;
                 }
             }
@@ -110,7 +118,7 @@ impl Death {
         errors
     }
 
-    fn register_signals(signals: &[i32]) -> Result<Receiver<()>, Box<dyn Error>> {
+    fn register_signals(signals: &[i32]) -> Result<Receiver<()>, Error> {
         let (sender, receiver) = bounded(100);
         let signals = Signals::new(signals)?;
 

@@ -1,48 +1,61 @@
-use std::{
-    error::Error,
-    fmt::{Display, Formatter, Result},
-};
+use std::fmt::{Display, Formatter, Result};
 
-#[derive(Debug)]
-pub struct CloseTimedOutError {
-    num_waiting: i32,
+// use thiserror::Error;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("an error from the worker")]
+    Worker,
+    #[error("Timed out while waiting for {0} workers to close")]
+    TimedOut(i32),
+
+    #[error(transparent)]
+    io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error>),
 }
 
-impl CloseTimedOutError {
-    pub fn new(waiting: i32) -> CloseTimedOutError {
-        CloseTimedOutError {
-            num_waiting: waiting,
-        }
-    }
-}
+// #[derive(Debug)]
+// pub struct CloseTimedOutError {
+//     num_waiting: i32,
+// }
 
-impl Display for CloseTimedOutError {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        write!(
-            f,
-            "Timed out while waiting for {} workers to close",
-            self.num_waiting
-        )
-    }
-}
+// impl CloseTimedOutError {
+//     pub fn new(waiting: i32) -> CloseTimedOutError {
+//         CloseTimedOutError {
+//             num_waiting: waiting,
+//         }
+//     }
+// }
 
-impl Error for CloseTimedOutError {}
+// impl Display for CloseTimedOutError {
+//     fn fmt(&self, f: &mut Formatter) -> Result {
+//         write!(
+//             f,
+//             "Timed out while waiting for {} workers to close",
+//             self.num_waiting
+//         )
+//     }
+// }
 
-#[derive(Debug)]
-pub struct DeathError {
-    cause: Box<dyn Error + Send + Sync>,
-}
+// impl Error for CloseTimedOutError {}
 
-impl DeathError {
-    pub fn new(cause: Box<dyn Error + Send + Sync>) -> DeathError {
-        DeathError { cause }
-    }
-}
+// #[derive(Debug)]
+// pub struct DeathError {
+//     cause: Box<dyn Error + Send + Sync>,
+// }
 
-impl Display for DeathError {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        write!(f, "Error from worker: {}", self.cause)
-    }
-}
+// impl DeathError {
+//     pub fn new(cause: Box<dyn Error + Send + Sync>) -> DeathError {
+//         DeathError { cause }
+//     }
+// }
 
-impl Error for DeathError {}
+// impl Display for DeathError {
+//     fn fmt(&self, f: &mut Formatter) -> Result {
+//         write!(f, "Error from worker: {}", self.cause)
+//     }
+// }
+
+// impl Error for DeathError {}
