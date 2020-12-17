@@ -5,7 +5,7 @@ use signal_hook::iterator::Signals;
 use std::{fmt::Debug, thread::spawn, time::Duration};
 
 pub trait Life: Debug {
-    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn run(&mut self, done: Receiver<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[derive(Debug)]
@@ -43,7 +43,7 @@ impl Death {
         })
     }
 
-    pub fn give_life<T>(&mut self, runner: T) -> &mut Death
+    pub fn give_life<T>(&mut self, mut runner: T) -> &mut Death
     where
         T: Life + std::marker::Send + 'static,
     {

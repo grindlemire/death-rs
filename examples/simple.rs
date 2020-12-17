@@ -59,7 +59,7 @@ impl Worker {
 }
 
 impl Life for Worker {
-    fn run(&self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn run(&mut self, done: Receiver<()>) -> Result<(), Box<dyn Error + Send + Sync>> {
         info!("Running {}", self.id);
         loop {
             select! {
